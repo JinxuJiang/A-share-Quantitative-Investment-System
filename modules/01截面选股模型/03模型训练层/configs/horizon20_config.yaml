@@ -1,0 +1,85 @@
+# Alpha Combiner 默认配置文件
+# 模型训练层 - LightGBM 截面回归模型
+
+# ==================== 数据配置 ====================
+data:
+  # 因子数据路径（相对于项目根目录）
+  factor_paths:
+    technical: "02因子库/processed_data/factors/technical"
+    financial: "02因子库/processed_data/factors/financial"
+  
+  # 行情数据路径（用于计算标签）
+  market_data_path: "02因子库/processed_data/market_data"
+  
+  # 使用的行情字段（只用close计算未来收益）
+  price_column: "close"
+  open_column: "open"  # V1新增：开盘价字段
+  
+  # ST状态数据路径（新增）
+  st_status_path: "01数据/data/tushare_data/st_status.parquet"
+  profit_filter_pct: 0.20  # 训练集过滤净利润TTM最低20%且亏损股票
+  
+  # 预测目标配置
+  label:
+    horizon: 20  # 预测未来20日收益率
+    formula: "forward_return"
+    use_open_price: true  # V1新增：使用开盘价计算标签
+
+# ==================== Walk-forward 配置 ====================
+walk_forward:
+  train_window: "3Y"    # 训练窗口：3年
+  valid_window: "6M"    # 验证窗口：6个月（用于早停）
+  test_window: "3M"     # 测试窗口：3个月
+  step: "3M"            # 步长：每3个月滚动一次
+  
+  # 数据范围限制（可选）
+  start_date: "2010-01-01"  # 训练开始日期
+  end_date: null            # 训练结束日期（null表示到最新数据）
+
+# ==================== LightGBM 模型配置 ====================
+# 注：使用 Huber 损失替代 MSE，对异常值更鲁棒，防止过拟合极端收益
+model:
+  name: "fined_lightgbm"
+  params:
+    objective: "huber"           # Huber损失：对异常值鲁棒（替代 regression/mse）
+    metric: "huber"
+    boosting_type: "gbdt"
+    
+    # === 关键修正：加大模型容量 ===
+    num_leaves: 63               # 原来31太小了，5000只股票需要更多叶子来区分
+    max_depth: 6                 # 配合63个叶子，防止过拟合的同时增加区分度
+    learning_rate: 0.01          # MAE需要更低的学习率，收敛更稳定
+    
+    # === 关键修正：精细化控制 ===
+    min_data_in_leaf: 150         # 增加这个值，不允许模型对小众股票有更细致的预测
+    feature_fraction: 0.5        # 降低列采样，增加树之间的差异性
+    bagging_fraction: 0.8
+    bagging_freq: 5
+    
+    # === 关键修正：正则化防止坍缩 ===
+    lambda_l1: 0.3               # 小L1正则，防止一家独大
+    lambda_l2: 5.0               # 增加L2正则，防止过拟合
+    
+    verbose: -1
+    num_threads: 8
+    n_estimators: 1000           # 增加树的数量，配合低学习率
+    early_stopping_rounds: 50
+
+  # 随机种子（保证可复现）
+  random_state: 42
+
+# ==================== 训练配置 ====================
+training:
+  save_models: true
+  save_feature_importance: true
+  log_level: "INFO"
+    
+# ==================== 输出配置 ====================
+output:
+  # 实验输出根目录
+  experiments_dir: "03模型训练层/experiments"
+  
+  # 文件命名格式
+  model_filename: "model_fold_{fold_id:03d}.pkl"
+  importance_filename: "importance_fold_{fold_id:03d}.csv"
+  predictions_filename: "predictions.parquet"

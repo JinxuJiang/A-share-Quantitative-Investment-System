@@ -1,0 +1,81 @@
+# Alpha Combiner 60日预测模型配置 (V1修复版)
+# 针对长期预测(60天)的平滑特性，使用回归损失和适中正则化
+
+# ==================== 数据配置 ====================
+data:
+  factor_paths:
+    technical: "02因子库/processed_data/factors/technical"
+    financial: "02因子库/processed_data/factors/financial"
+  market_data_path: "02因子库/processed_data/market_data"
+  price_column: "close"
+  open_column: "open"  # V1新增：开盘价字段
+  st_status_path: "01数据/data/tushare_data/st_status.parquet"  # ST状态数据（Tushare）
+  profit_filter_pct: 0.20  # 训练集过滤净利润TTM最低20%且亏损股票
+  
+  label:
+    horizon: 60  # 预测未来60日收益率
+    formula: "forward_return"
+    use_open_price: true  # V1新增：使用开盘价计算标签
+
+# ==================== Walk-forward 配置 ====================
+walk_forward:
+  train_window: "3Y"    # 训练窗口：3年
+  valid_window: "6M"    # 验证窗口：6个月
+  test_window: "3M"     # 测试窗口：3个月
+  step: "3M"            # 步长：每3个月滚动一次
+  
+  start_date: "2010-01-01"
+  end_date: null
+  
+  # V1新增：双重Gap防止数据泄露 (60+1 = 61)
+  gap_train_valid: 61   # 训练-验证间隔（交易日）
+  gap_valid_test: 61    # 验证-测试间隔（交易日）
+
+# ==================== LightGBM 60日模型配置 ====================
+# 针对长期预测的特性：
+# - 长期预测信号更平滑，使用 Huber 损失对异常值鲁棒
+# - 适中学习率 + 适度深度的树
+# - 长期预测需要更大的模型容量来捕捉趋势
+model:
+  name: "lightgbm"
+  params:
+    objective: "huber"           # Huber损失：对异常值鲁棒（替代 regression/mse）
+    metric: "huber"
+    boosting_type: "gbdt"
+    
+    # === 树的生长控制 ===
+    num_leaves: 63               # 较大的叶子数量，捕捉更多长期模式
+    max_depth: 7                 # 适度深度
+    min_data_in_leaf: 100        # 适中的叶子样本数
+    
+    # === 学习节奏 ===
+    learning_rate: 0.02          # 适中学习率
+    n_estimators: 1000           # 足够树数量
+    
+    # === 随机抽样 ===
+    feature_fraction: 0.5        # 列采样
+    bagging_fraction: 0.8        # 行采样
+    bagging_freq: 5              # 每5轮采样
+    
+    # === 正则化 ===
+    lambda_l1: 0.5               # L1正则
+    lambda_l2: 5.0               # L2正则
+    
+    verbose: -1
+    num_threads: 8
+    early_stopping_rounds: 50
+
+  random_state: 42
+
+# ==================== 训练配置 ====================
+training:
+  save_models: true
+  save_feature_importance: true
+  log_level: "INFO"
+
+# ==================== 输出配置 ====================
+output:
+  experiments_dir: "03模型训练层/experiments"
+  model_filename: "model_fold_{fold_id:03d}.pkl"
+  importance_filename: "importance_fold_{fold_id:03d}.csv"
+  predictions_filename: "predictions.parquet"

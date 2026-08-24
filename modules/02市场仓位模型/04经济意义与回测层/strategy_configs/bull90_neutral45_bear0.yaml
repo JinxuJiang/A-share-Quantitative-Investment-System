@@ -1,0 +1,8 @@
+strategy:
+  name: bull90_neutral45_bear0
+  description: 牛市90%、震荡45%、熊市0%的防守型仓位映射
+
+backtest:
+  target_exposure: 0.90
+  neutral_exposure: 0.45
+  bear_exposure: 0.00

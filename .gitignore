@@ -1,0 +1,56 @@
+# Python 缓存与本地环境
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# 编辑器与系统文件
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 凭据与本地配置
+*.env
+.env.*
+!*\.env.example
+*token*.txt
+*secret*
+*credential*
+
+# 数据、缓存与模型产物
+data/
+raw_data/
+processed_data/
+cache/
+.cache/
+tmp/
+*.parquet
+*.feather
+*.h5
+*.hdf5
+*.pkl
+*.pickle
+*.joblib
+*.bin
+*.model
+*.ckpt
+*.pth
+
+# 运行期输出
+experiments/
+exports/
+outputs/
+reports/
+logs/
+*.log
+
+# 展示仓库只保留主动筛选的结果材料
+!results/
+!results/**
+!sample_data/
+!sample_data/**
+

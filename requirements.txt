@@ -1,0 +1,16 @@
+# Python 3.10；版本记录自本地 qf 研究环境
+numpy==1.26.4
+pandas==2.3.3
+pyarrow==23.0.1
+PyYAML==6.0.3
+scipy==1.15.3
+scikit-learn==1.7.2
+statsmodels==0.14.6
+lightgbm==4.6.0
+optuna==4.9.0
+alphalens-reloaded==0.4.6
+backtrader==1.9.78.123
+matplotlib==3.10.8
+tushare==1.4.29
+joblib==1.5.3
+

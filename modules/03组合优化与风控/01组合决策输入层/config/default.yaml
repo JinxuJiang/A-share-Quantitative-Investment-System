@@ -1,0 +1,46 @@
+schema_version: decision_input_config_v1
+
+paths:
+  cross_section_project: ../截面多因子模型
+  market_project: ../市场预测模型
+  local_data_root: data
+  output_root: outputs
+
+sync:
+  market_fields:
+    - open
+    - high
+    - low
+    - close
+    - preClose
+    - volume
+    - amount
+    - suspendFlag
+  status_files:
+    - st_status.parquet
+    - suspend_status.parquet
+  metadata_files:
+    - stock_info.parquet
+    - industry_map.csv
+    - raw/metadata/trade_schedule.parquet
+
+decision:
+  horizon_days: 20
+  top_n: 30
+  board_scope: main_board
+  signal_available_after: market_close
+
+universe:
+  min_price_observations: 253
+  require_non_st: true
+  require_not_suspended: true
+
+alpha:
+  method: eligible_rank_normal_score
+  rank_method: average
+
+risk:
+  estimator: ledoit_wolf
+  lookback_returns: 252
+  covariance_horizon_days: 20
+  assume_zero_return_on_historical_suspension: true

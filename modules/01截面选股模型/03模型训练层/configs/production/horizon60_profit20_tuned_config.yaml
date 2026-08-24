@@ -1,0 +1,66 @@
+data:
+  factor_paths:
+    technical: 02因子库/processed_data/factors/technical
+    financial: 02因子库/processed_data/factors/financial
+  market_data_path: 02因子库/processed_data/market_data
+  price_column: close
+  open_column: open
+  st_status_path: 01数据/data/tushare_data/st_status.parquet
+  profit_filter_pct: 0.2
+  label:
+    horizon: 60
+    formula: forward_return
+    use_open_price: true
+walk_forward:
+  train_window: 3Y
+  valid_window: 6M
+  test_window: 3M
+  step: 3M
+  start_date: '2010-01-01'
+  end_date: null
+  gap_train_valid: 61
+  gap_valid_test: 61
+model:
+  name: lightgbm
+  params:
+    objective: huber
+    metric: huber
+    boosting_type: gbdt
+    num_leaves: 8
+    max_depth: 3
+    min_data_in_leaf: 800
+    learning_rate: 0.0314633295131679
+    n_estimators: 1000
+    feature_fraction: 0.5
+    bagging_fraction: 0.9
+    bagging_freq: 5
+    lambda_l1: 0.3159026001201123
+    lambda_l2: 15.335901646230468
+    verbose: -1
+    num_threads: 8
+    early_stopping_rounds: 50
+    min_gain_to_split: 0.5064184574458382
+  random_state: 42
+training:
+  save_models: true
+  save_feature_importance: true
+  log_level: INFO
+output:
+  experiments_dir: 03模型训练层/experiments
+  model_filename: model_fold_{fold_id:03d}.pkl
+  importance_filename: importance_fold_{fold_id:03d}.csv
+  predictions_filename: predictions.parquet
+quarterly_v2:
+  train_window: 3Y
+  valid_window: 2M
+  gap: 61
+  smooth_halflife: 10
+tuning_metadata:
+  study_name: lgbm60_tushare_profit20
+  recommended_source: trial_017
+  validation_periods:
+  - 2021Q1
+  - 2023Q1
+  - 2024Q4
+  - 2026Q2
+  generated_at: '2026-08-01 00:00:02'

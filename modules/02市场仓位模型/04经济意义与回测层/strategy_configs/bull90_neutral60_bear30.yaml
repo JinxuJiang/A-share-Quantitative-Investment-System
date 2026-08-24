@@ -1,0 +1,8 @@
+strategy:
+  name: bull90_neutral60_bear30
+  description: 牛市90%、震荡60%、熊市30%的底仓型仓位映射
+
+backtest:
+  target_exposure: 0.90
+  neutral_exposure: 0.60
+  bear_exposure: 0.30

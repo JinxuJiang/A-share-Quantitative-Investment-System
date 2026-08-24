@@ -1,0 +1,2 @@
+"""Expected-return signal transformation."""
+

@@ -1,0 +1,75 @@
+# Alpha Combiner 默认配置文件
+# 模型训练层 - LightGBM 截面回归模型
+
+# ==================== 数据配置 ====================
+data:
+  # 因子数据路径（相对于项目根目录）
+  factor_paths:
+    technical: "02因子库/processed_data/factors/technical"
+    financial: "02因子库/processed_data/factors/financial"
+  
+  # 行情数据路径（用于计算标签）
+  market_data_path: "02因子库/processed_data/market_data"
+  
+  # 使用的行情字段（只用close计算未来收益）
+  price_column: "close"
+  
+  # ST状态数据路径（新增）
+  st_status_path: "01数据/data/tushare_data/st_status.parquet"
+  
+  # 预测目标配置
+  label:
+    horizon: 20  # 预测未来20日收益率
+    formula: "forward_return"  # close[t+20]/close[t] - 1
+
+# ==================== Walk-forward 配置 ====================
+walk_forward:
+  train_window: "3Y"    # 训练窗口：3年
+  valid_window: "6M"    # 验证窗口：6个月（用于早停）
+  test_window: "3M"     # 测试窗口：3个月
+  step: "3M"            # 步长：每3个月滚动一次
+  
+  # 数据范围限制（可选）
+  start_date: "2010-01-01"  # 训练开始日期
+  end_date: null            # 训练结束日期（null表示到最新数据）
+
+# ==================== LightGBM 模型配置 ====================
+model:
+  name: "lightgbm"
+  params:
+    objective: "regression"
+    metric: "mse"
+    boosting_type: "gbdt"
+    num_leaves: 31
+    learning_rate: 0.05
+    feature_fraction: 0.8      # 列采样
+    bagging_fraction: 0.8      # 行采样
+    bagging_freq: 5
+    verbose: -1
+    num_threads: 8
+    n_estimators: 500          # 最大树数量
+    early_stopping_rounds: 50  # 早停轮数
+  
+  # 随机种子（保证可复现）
+  random_state: 42
+
+# ==================== 训练配置 ====================
+training:
+  # 是否保存每个fold的模型
+  save_models: true
+  
+  # 是否保存特征重要性
+  save_feature_importance: true
+  
+  # 日志级别
+  log_level: "INFO"
+
+# ==================== 输出配置 ====================
+output:
+  # 实验输出根目录
+  experiments_dir: "03模型训练层/experiments"
+  
+  # 文件命名格式
+  model_filename: "model_fold_{fold_id:03d}.pkl"
+  importance_filename: "importance_fold_{fold_id:03d}.csv"
+  predictions_filename: "predictions.parquet"

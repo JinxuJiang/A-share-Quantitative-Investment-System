@@ -1,0 +1,20 @@
+schema_version: portfolio_risk_config_v1
+
+paths:
+  portfolio_output_root: ../02组合优化层/outputs
+  decision_output_root: ../01组合决策输入层/outputs
+  output_root: outputs
+
+risk:
+  method: parametric_normal
+  horizon_days: 5
+  confidence_levels:
+    - 0.95
+    - 0.99
+  expected_return: 0.0
+  cash_return: 0.0
+  cash_volatility: 0.0
+
+validation:
+  weight_tolerance: 1.0e-8
+  psd_tolerance: 1.0e-10

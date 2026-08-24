@@ -1,0 +1,30 @@
+schema_version: portfolio_backtest_config_v1
+
+paths:
+  portfolio_output_root: ../02组合优化层/outputs
+  decision_data_root: ../01组合决策输入层/data
+  benchmark_file: ../../截面多因子模型/01数据/data/tushare_data/benchmark/000852.SH.parquet
+  reports_root: reports
+
+account:
+  initial_cash: 100000.0
+  cash_return: 0.0
+
+execution:
+  board_lot: 100
+  minimum_rebalance_weight: 0.005
+  price_mode: forward_adjusted
+  signal_timing: week_end_close
+  execution_timing: next_trade_day_open
+  block_when_suspended: true
+  stop_loss_enabled: false
+
+costs:
+  scenario: high_cost
+  buy_cost_rate: 0.003
+  sell_cost_rate: 0.004
+  minimum_fee: 5.0
+
+report:
+  benchmark_name: 中证1000
+  risk_free_rate: 0.0

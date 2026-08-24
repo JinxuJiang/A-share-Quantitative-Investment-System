@@ -1,0 +1,30 @@
+schema_version: portfolio_optimization_config_v2
+
+paths:
+  decision_output_root: ../01组合决策输入层/outputs
+  output_root: outputs
+
+objective:
+  risk_weight: 1.0
+  alpha_weight: 0.10
+  turnover_penalty: 0.05
+  turnover_smoothing: 1.0e-6
+  risk_reference: equal_weight_variance
+  alpha_scaling: cross_section_zscore
+
+constraints:
+  weight_basis: account
+  market_exposure_mode: target_with_cash_fallback
+  min_stock_weight: 0.0
+  max_stock_weight: 0.10
+  max_industry_weight: 0.25
+  fully_invested_internal: true
+
+solver:
+  method: SLSQP
+  max_iterations: 2000
+  tolerance: 1.0e-12
+
+validation:
+  weight_tolerance: 1.0e-8
+  active_weight_threshold: 1.0e-6

@@ -1,0 +1,4 @@
+# 仅运行 CNN-GRU 市场时序模型时需要
+-r requirements.txt
+tensorflow==2.10.0
+
