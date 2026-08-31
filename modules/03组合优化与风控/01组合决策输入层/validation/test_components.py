@@ -10,15 +10,30 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+VALIDATION_ROOT = ROOT / "validation"
+if str(VALIDATION_ROOT) not in sys.path:
+    sys.path.insert(0, str(VALIDATION_ROOT))
 
 from estimation.alpha.alpha_transformer import AlphaTransformer
+from estimation.build_decision_snapshot import official_sessions
 from estimation.risk.covariance_estimator import LedoitWolfCovarianceEstimator
 from estimation.risk.return_builder import ReturnMatrixBuilder
 from universe.universe_builder import UniverseBuilder
-from validation.snapshot_validator import SnapshotValidator
+from snapshot_validator import SnapshotValidator
 
 
 class ComponentTests(unittest.TestCase):
+    def test_official_sessions_preserve_each_open_a_share_date(self) -> None:
+        schedule = pd.DataFrame(
+            {
+                "cal_date": ["20260720", "20260721", "20260722", "20260723"],
+                "is_open": [1, 1, 0, 1],
+            }
+        )
+        result = official_sessions(schedule)
+        expected = pd.to_datetime(["2026-07-20", "2026-07-21", "2026-07-23"])
+        self.assertEqual(result.tolist(), expected.tolist())
+
     def test_decision_pipeline_components(self) -> None:
         date = pd.Timestamp("2026-07-24")
         codes = [f"{i:06d}.SZ" for i in range(1, 6)] + ["300001.SZ"]

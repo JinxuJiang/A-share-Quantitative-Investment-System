@@ -8,7 +8,7 @@
 - 市场模型决定“股票总体买多少”；
 - 本项目决定“每只股票买多少、组合风险多大、下一期如何调仓”。
 
-> 当前状态：严格 PIT Alpha 与 Ridge 0% / 45% / 90% 市场仓位已经贯通全部 148 期周度信号，覆盖 2023-10-13 至 2026-08-21；最新信号计划于 2026-08-24 开盘执行。
+> 当前代码契约：上游发布每日市场信号，01 层形成每日决策历史；02～05 层再按官方交易日历独立生成周度和月度轨道。VaR 缩放默认启用，周度和月度分别使用各自的风险期限与预算。
 
 ## 系统架构
 
@@ -41,9 +41,9 @@
 组合风控层/
 ├─ 01组合决策输入层/       # 同步上游数据，生成 Alpha、股票池和协方差
 ├─ 02组合优化层/           # 使用 Alpha 与协方差优化股票权重
-├─ 03组合风控层/           # 计算下一调仓周期的 5 日 VaR/ES
-├─ 04组合回测层/           # Backtrader 周频账户回测
-├─ 05调仓输出层/           # 比较最近两期权重，生成调仓报告
+├─ 03组合风控层/           # 计算周度 5 日、月度 20 日 VaR/ES 与可选缩放
+├─ 04组合回测层/           # Backtrader 周度或月度账户回测
+├─ 05调仓输出层/           # 按指定频率比较最近两期权重，生成调仓报告
 ├─ assets/                 # README 使用的稳定图片资源
 └─ README.md
 ```
@@ -52,17 +52,17 @@
 
 ### 01 组合决策输入层
 
-本层读取截面模型、市场模型及全量行情，遍历两个模型共有的全部周度 `signal_date`。
+本层读取截面模型、市场模型及全量行情，遍历两个模型共有的全部日度 `signal_date`。
 
 每一期执行：
 
 1. 只使用信号日及以前可获得的数据；
 2. 限定主板股票，过滤 ST、停牌及历史数据不足股票；
-3. 在可交易股票中重新计算 `eligible_alpha_rank`，选择前 20 只；
+3. 在可交易股票中重新计算 `eligible_alpha_rank`，选择前 30 只；
 4. 将排名转换为横截面正态分数 `alpha_zscore`；
 5. 使用过去 252 个收益观测估计 Ledoit-Wolf 收缩协方差；
 6. 将协方差转换成 20 日预测口径；
-7. 发布完整历史决策输入。
+7. 发布日度完整历史决策输入，由下游选择周末或月末。
 
 正式输出：
 
@@ -77,7 +77,7 @@ outputs/releases/decision_history_起始日_结束日_v1/
 
 ### 02 组合优化层
 
-本层按日期顺序求解每期 Top 30 股票权重，并使用上一期目标权重计算换手惩罚。
+本层分别按周度和月度日期顺序求解每期 Top 30 股票权重；两个轨道各自使用本频率上一期目标权重计算换手惩罚。
 
 第一版目标函数为：
 
@@ -108,7 +108,7 @@ cash_weight = 1 - stock_exposure
 
 ### 03 组合风控层
 
-本层读取账户实际股票权重和同一期协方差，计算从本周信号形成后到下一次周度调仓前的 5 日风险。
+本层读取账户实际股票权重和同一期协方差，分别计算周度 5 日与月度 20 日风险。
 
 第一版采用参数正态法，输出：
 
@@ -122,7 +122,7 @@ $$
 \sigma_p=\sqrt{w^\top\Sigma w}
 $$
 
-第一版只测量风险，不设置强制风险阈值，也不会自动缩仓。现金收益率和波动率暂设为 0，组合预期收益暂设为 0。
+VaR 预算缩放按 `min(1, budget / VaR)` 降低股票总仓位，并把差额留在现金；不会增加仓位，也不会改变股票相对权重。该功能默认启用。现金收益率和波动率暂设为 0，组合预期收益暂设为 0。
 
 ### 04 组合回测层
 
@@ -132,7 +132,7 @@ $$
 
 - 初始资金：100,000 元；
 - 行情：等比前复权；
-- 信号：每周最后一个交易日收盘后形成；
+- 信号：所选调仓频率的最后一个交易日收盘后形成；
 - 执行：下一交易日开盘；
 - 交易单位：100 股整数倍；
 - 默认过滤同一市场仓位档位下不足账户净值 0.5% 的存量股票小额加减仓，建仓、清仓和仓位档位切换不受影响；
@@ -145,7 +145,7 @@ $$
 
 ### 05 调仓输出层
 
-本层自动读取组合优化层当前版本的最近两期目标权重，输出：
+本层自动读取指定周度或月度轨道的组合优化与风险版本，比较最近两期缩放后目标权重并输出：
 
 - 上期与本期股票仓位、现金仓位；
 - 卖出股票；
@@ -160,36 +160,67 @@ $$
 
 ### 环境与上游目录
 
-项目当前使用 `qf` Python 环境。主要依赖包括 pandas、NumPy、SciPy、scikit-learn、PyArrow、PyYAML、Backtrader、Matplotlib 和 pytest。
+项目当前使用 `qf_clean` Python 环境。主要依赖包括 pandas、NumPy、SciPy、scikit-learn、PyArrow、PyYAML、Backtrader、Matplotlib 和 pytest。
 
 默认目录关系为：
 
 ```text
-量化/
-├─ 截面多因子模型/
-├─ 市场预测模型/
-└─ 组合风控层/
+modules/
+├─ 01截面选股模型/
+├─ 02市场仓位模型/
+└─ 03组合优化与风控/
 ```
 
 ### 完整运行顺序
 
-在 `组合风控层` 根目录依次运行：
+日常更新可以在“投资系统”根目录一条命令完成。总入口只负责依次调用三个项目已有的入口；任一阶段失败都会立即停止：
+
+```powershell
+conda activate qf_clean
+python .\modules\03组合优化与风控\run_full_pipeline.py
+```
+
+正式运行前如需检查将要执行的全部命令：
+
+```powershell
+python .\modules\03组合优化与风控\run_full_pipeline.py --dry-run
+```
+
+默认数据阶段是每周增量更新，不会重新下载全部历史。每次运行使用新的版本号发布 Alpha、市场信号、组合权重、风险和调仓报告。
+
+流水线按照上海时间的自然周保存检查点。每个步骤成功后立即记录；同一周再次运行时，可以选择从第一个未完成步骤继续、从第1步重新运行或退出。进入下一自然周后会自动创建新的检查点，不会复用上周记录。日志保存在本地 `pipeline_logs/YYYY-Www/current.json`，不会提交到 Git。
+
+无需交互、直接继续本周任务：
+
+```powershell
+python .\modules\03组合优化与风控\run_full_pipeline.py --resume
+```
+
+无需交互、归档本周旧记录并从第1步重跑：
+
+```powershell
+python .\modules\03组合优化与风控\run_full_pipeline.py --restart
+```
+
+如需单独维护某一层，可进入 `modules/03组合优化与风控` 后依次运行：
 
 ```powershell
 # 1. 同步上游数据并重建全部历史决策输入
 python .\01组合决策输入层\run_pipeline.py
 
 # 2. 生成全部历史优化权重
-python .\02组合优化层\optimize.py
+python .\02组合优化层\optimize.py --frequency both
 
 # 3. 生成全部历史 5 日 VaR/ES
-python .\03组合风控层\assess_risk.py
+python .\03组合风控层\assess_risk.py --frequency both
 
 # 4. 运行 Backtrader 回测
-python .\04组合回测层\backtrader.eval.py
+python .\04组合回测层\backtrader.eval.py --frequency weekly
+python .\04组合回测层\backtrader.eval.py --frequency monthly
 
 # 5. 生成最近两期调仓报告
-python .\05调仓输出层\generate_rebalance_report.py
+python .\05调仓输出层\generate_rebalance_report.py --frequency weekly
+python .\05调仓输出层\generate_rebalance_report.py --frequency monthly
 ```
 
 同名回测或调仓报告已经存在时，明确添加 `--overwrite`：
@@ -258,17 +289,10 @@ portfolio_history_20231013_20260814_v1_high_cost
 
 ## 测试
 
-三个层级的测试包名称相同，应分别运行：
+全部层级测试可以在项目根目录一次运行：
 
 ```powershell
-cd .\01组合决策输入层
-python -m pytest validation -q
-
-cd ..\02组合优化层
-python -m pytest validation -q
-
-cd ..\03组合风控层
-python -m pytest validation -q
+python -m pytest -q
 ```
 
 ## 数据与 Git

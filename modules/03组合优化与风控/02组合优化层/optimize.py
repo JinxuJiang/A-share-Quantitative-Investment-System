@@ -1,4 +1,4 @@
-"""02组合优化层的日常入口：逐周生成完整历史权重表。"""
+"""02组合优化层的日常入口：生成周度与月度完整历史权重表。"""
 
 from pathlib import Path
 from runpy import run_path

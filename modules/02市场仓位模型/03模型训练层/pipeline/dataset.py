@@ -171,7 +171,14 @@ class ModelDataset:
 
     def load_or_build(self, rebuild: bool = False) -> pd.DataFrame:
         output = self.processed_dir / "dataset_with_label.parquet"
-        if rebuild or not output.exists():
+        source_paths = (self.feature_table_path, self.target_price_path)
+        source_is_newer = output.exists() and any(
+            path.stat().st_mtime_ns > output.stat().st_mtime_ns
+            for path in source_paths
+        )
+        if rebuild or not output.exists() or source_is_newer:
+            if source_is_newer and not rebuild:
+                print("检测到特征表或目标行情已更新，自动重建模型数据集", flush=True)
             return self.build(write=True)
         frame = pd.read_parquet(output)
         for column in self.ID_COLUMNS:

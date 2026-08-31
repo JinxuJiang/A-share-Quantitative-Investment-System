@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""构建全部周度日期的组合决策输入历史表。"""
+"""构建全部共同交易日的组合决策输入历史表。"""
 
 import argparse
 import json
@@ -29,10 +29,10 @@ from validation.snapshot_validator import SnapshotValidator
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="构建全部周度日期的决策输入历史表")
+    parser = argparse.ArgumentParser(description="构建全部共同交易日的决策输入历史表")
     parser.add_argument("--config", default="config/default.yaml")
-    parser.add_argument("--start-date", help="可选起始signal_date，默认使用全部共同周度日期")
-    parser.add_argument("--end-date", help="可选结束signal_date，默认使用全部共同周度日期")
+    parser.add_argument("--start-date", help="可选起始signal_date，默认使用全部共同交易日")
+    parser.add_argument("--end-date", help="可选结束signal_date，默认使用全部共同交易日")
     parser.add_argument("--release-id")
     return parser.parse_args()
 
@@ -41,35 +41,35 @@ def write_json(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
 
-def official_week_ends(schedule: pd.DataFrame) -> pd.DatetimeIndex:
+def official_sessions(schedule: pd.DataFrame) -> pd.DatetimeIndex:
     required = {"cal_date", "is_open"}
     if not required.issubset(schedule.columns):
         raise ValueError(f"交易安排缺少字段: {sorted(required - set(schedule.columns))}")
     dates = pd.to_datetime(schedule["cal_date"].astype(str), format="%Y%m%d", errors="coerce")
     open_days = dates.loc[pd.to_numeric(schedule["is_open"], errors="coerce").eq(1)].dropna()
-    return pd.DatetimeIndex(open_days.groupby(open_days.dt.to_period("W-FRI")).max()).sort_values()
+    return pd.DatetimeIndex(open_days).normalize().drop_duplicates().sort_values()
 
 
 def choose_dates(
     alpha_dates: pd.DatetimeIndex,
     market_signals: pd.DataFrame,
-    week_ends: pd.DatetimeIndex,
+    sessions: pd.DatetimeIndex,
     start_date: str | None,
     end_date: str | None,
 ) -> list[pd.Timestamp]:
     if market_signals["signal_date"].duplicated().any():
         raise ValueError("市场信号包含重复signal_date")
     market_dates = pd.DatetimeIndex(market_signals["signal_date"].unique()).normalize().sort_values()
-    outside_calendar = market_dates.difference(week_ends)
+    outside_calendar = market_dates.difference(sessions)
     if len(outside_calendar):
-        raise ValueError(f"市场信号包含非周末交易日: {outside_calendar.strftime('%Y-%m-%d').tolist()}")
+        raise ValueError(f"市场信号包含非交易日: {outside_calendar.strftime('%Y-%m-%d').tolist()}")
     common = market_dates.intersection(alpha_dates.normalize()).sort_values()
     if start_date:
         common = common[common >= pd.Timestamp(start_date).normalize()]
     if end_date:
         common = common[common <= pd.Timestamp(end_date).normalize()]
     if len(common) == 0:
-        raise ValueError("指定范围内没有Alpha与市场信号的共同周度日期")
+        raise ValueError("指定范围内没有Alpha与市场信号的共同交易日")
     return [pd.Timestamp(date).normalize() for date in common]
 
 
@@ -98,7 +98,7 @@ def existing_release_is_current(
     manifest = read_json(manifest_path)
     current = read_json(current_path)
     same = (
-        manifest.get("schema_version") == "decision_history_v1"
+        manifest.get("schema_version") == "decision_history_v2"
         and manifest.get("release_id") == release_id
         and manifest.get("source_releases") == source_releases
         and manifest.get("config") == config
@@ -136,12 +136,15 @@ def main() -> None:
     dates = choose_dates(
         alpha_reader.available_dates(),
         market_signals,
-        official_week_ends(data_reader.read_trade_schedule()),
+        official_sessions(data_reader.read_trade_schedule()),
         args.start_date,
         args.end_date,
     )
     first_date, last_date = dates[0], dates[-1]
-    release_id = args.release_id or f"decision_history_{first_date:%Y%m%d}_{last_date:%Y%m%d}_v1"
+    release_id = (
+        args.release_id
+        or f"decision_daily_history_{first_date:%Y%m%d}_{last_date:%Y%m%d}_v1"
+    )
     releases_root = output_root / "releases"
     release_dir = releases_root / release_id
     if existing_release_is_current(release_dir, output_root, release_id, config, source_releases):
@@ -262,12 +265,13 @@ def main() -> None:
     )
     file_names = ["decision_inputs.parquet", "covariance.parquet", "period_summary.parquet", "config.yaml"]
     manifest = {
-        "schema_version": "decision_history_v1",
+        "schema_version": "decision_history_v2",
         "release_id": release_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "first_signal_date": first_date.date().isoformat(),
         "last_signal_date": last_date.date().isoformat(),
         "period_count": int(len(dates)),
+        "decision_frequency": "daily",
         "horizon_days": horizon_days,
         "top_n": top_n,
         "source_releases": source_releases,
@@ -284,12 +288,13 @@ def main() -> None:
     os.replace(temp_dir, release_dir)
 
     current = {
-        "schema_version": "decision_history_current_v1",
+        "schema_version": "decision_history_current_v2",
         "release_id": release_id,
         "manifest": f"releases/{release_id}/manifest.json",
         "first_signal_date": first_date.date().isoformat(),
         "last_signal_date": last_date.date().isoformat(),
         "period_count": int(len(dates)),
+        "decision_frequency": "daily",
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
     output_root.mkdir(parents=True, exist_ok=True)

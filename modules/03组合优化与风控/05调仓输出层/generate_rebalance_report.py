@@ -22,6 +22,7 @@ import pandas as pd
 LAYER_ROOT = Path(__file__).resolve().parent
 PROJECT_ROOT = LAYER_ROOT.parent
 PORTFOLIO_OUTPUT_ROOT = PROJECT_ROOT / "02组合优化层" / "outputs"
+RISK_OUTPUT_ROOT = PROJECT_ROOT / "03组合风控层" / "outputs"
 STOCK_INFO_PATH = PROJECT_ROOT / "01组合决策输入层" / "data" / "metadata" / "stock_info.parquet"
 TRADE_SCHEDULE_PATH = (
     PROJECT_ROOT / "01组合决策输入层" / "data" / "metadata" / "trade_schedule.parquet"
@@ -32,7 +33,11 @@ WEIGHT_EPSILON = 1e-12
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="生成最近两期目标组合的调仓报告")
-    parser.add_argument("--portfolio-release", help="默认读取02组合优化层 outputs/current.json")
+    parser.add_argument("--portfolio-release", help="默认读取02组合优化层对应频率的 current.json")
+    parser.add_argument("--risk-release", help="默认读取与组合匹配的03组合风控层版本")
+    parser.add_argument(
+        "--frequency", choices=("weekly", "monthly"), default="weekly"
+    )
     parser.add_argument("--previous-date", help="上期信号日期，格式 YYYY-MM-DD")
     parser.add_argument("--current-date", help="本期信号日期，格式 YYYY-MM-DD")
     parser.add_argument("--report-id", help="默认使用 rebalance_本期日期")
@@ -50,19 +55,85 @@ def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def resolve_release(release_id: str | None) -> tuple[str, Path]:
+def resolve_release(
+    release_id: str | None, frequency: str = "weekly"
+) -> tuple[str, Path]:
+    track_root = PORTFOLIO_OUTPUT_ROOT / frequency
     if release_id is None:
-        current_path = PORTFOLIO_OUTPUT_ROOT / "current.json"
+        current_path = track_root / "current.json"
         if not current_path.exists():
             raise FileNotFoundError(f"找不到组合优化层当前版本: {current_path}")
         current = read_json(current_path)
         release_id = current.get("release_id")
     if not release_id:
         raise ValueError("组合优化层 current.json 缺少 release_id")
-    release_dir = PORTFOLIO_OUTPUT_ROOT / "releases" / release_id
+    release_dir = track_root / "releases" / release_id
     if not release_dir.is_dir():
         raise FileNotFoundError(f"找不到组合优化版本: {release_dir}")
     return release_id, release_dir
+
+
+def load_risk_history(
+    release_id: str | None, portfolio_release: str, frequency: str
+) -> tuple[str, pd.DataFrame]:
+    track_root = RISK_OUTPUT_ROOT / frequency
+    if release_id is None:
+        current = read_json(track_root / "current.json")
+        release_id = current.get("release_id")
+    if not release_id:
+        raise ValueError("03组合风控层 current.json 缺少 release_id")
+    release_dir = track_root / "releases" / release_id
+    manifest = read_json(release_dir / "manifest.json")
+    if manifest.get("source_portfolio_release") != portfolio_release:
+        raise ValueError("风险版本不是由所选组合版本计算得到")
+    if manifest.get("rebalance_frequency") != frequency:
+        raise ValueError("风险版本频率与调仓报告频率不一致")
+    risk = pd.read_parquet(release_dir / "risk.parquet")
+    risk["signal_date"] = pd.to_datetime(risk["signal_date"]).dt.normalize()
+    return str(release_id), risk
+
+
+def apply_risk_scaling(
+    weights: pd.DataFrame, summary: pd.DataFrame, risk: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    required = {
+        "signal_date",
+        "risk_scale",
+        "scaled_stock_exposure",
+        "scaled_cash_weight",
+        "var_budget",
+    }
+    missing = required - set(risk.columns)
+    if missing:
+        raise ValueError(f"风险历史缺少缩放字段，请重跑03层: {sorted(missing)}")
+    risk_fields = risk[list(required)].copy()
+    if risk_fields["signal_date"].duplicated().any():
+        raise ValueError("风险历史存在重复 signal_date")
+    scaled_weights = weights.merge(
+        risk_fields[["signal_date", "risk_scale"]],
+        on="signal_date",
+        how="left",
+        validate="many_to_one",
+    )
+    if scaled_weights["risk_scale"].isna().any():
+        raise ValueError("风险历史没有覆盖全部组合信号日期")
+    scaled_weights["unscaled_target_weight"] = scaled_weights["target_weight"]
+    scaled_weights["target_weight"] = (
+        scaled_weights["target_weight"] * scaled_weights["risk_scale"]
+    )
+    scaled_summary = summary.merge(
+        risk_fields,
+        on="signal_date",
+        how="left",
+        validate="one_to_one",
+    )
+    if scaled_summary["risk_scale"].isna().any():
+        raise ValueError("风险历史没有覆盖全部组合汇总日期")
+    scaled_summary["unscaled_stock_exposure"] = scaled_summary["stock_exposure"]
+    scaled_summary["unscaled_cash_weight"] = scaled_summary["cash_weight"]
+    scaled_summary["stock_exposure"] = scaled_summary["scaled_stock_exposure"]
+    scaled_summary["cash_weight"] = scaled_summary["scaled_cash_weight"]
+    return scaled_weights, scaled_summary
 
 
 def choose_dates(
@@ -253,6 +324,7 @@ def create_html(
     actions: pd.DataFrame,
     minimum_rebalance_weight: float,
     planned_execution_date: pd.Timestamp | None,
+    frequency: str = "weekly",
 ) -> str:
     sell = actions.loc[actions["action_group"].eq("卖出")]
     keep = actions.loc[actions["action_group"].eq("继续持有")]
@@ -304,6 +376,7 @@ th {{ background: #f8f9fa; color: #555; }} th:nth-child(-n+4),td:nth-child(-n+4)
 
 <div class="summary">
   <strong>组合版本：</strong>{html.escape(release_id)}<br>
+  <strong>调仓频率：</strong>{'周度' if frequency == 'weekly' else '月度'}<br>
   <strong>上期信号日：</strong>{previous_date.date()}<br>
   <strong>本期信号日：</strong>{current_date.date()}（收盘后形成）<br>
   <strong>计划执行日：</strong>{execution_text}（开盘执行）<br>
@@ -318,6 +391,8 @@ th {{ background: #f8f9fa; color: #555; }} th:nth-child(-n+4),td:nth-child(-n+4)
   <div class="card"><div class="value">{pct(float(current_summary['stock_exposure']))}</div><div class="label">本期股票仓位</div></div>
   <div class="card"><div class="value {exposure_class}">{exposure_change * 100:+.2f}%</div><div class="label">股票仓位变化</div></div>
   <div class="card"><div class="value">{pct(float(previous_summary['cash_weight']))} → {pct(float(current_summary['cash_weight']))}</div><div class="label">现金仓位</div></div>
+  <div class="card"><div class="value">{float(current_summary['risk_scale']):.2f}x</div><div class="label">当前VaR缩放</div></div>
+  <div class="card"><div class="value">{pct(float(current_summary['var_budget']))}</div><div class="label">VaR预算</div></div>
 </div>
 <div class="cards">
   <div class="card"><div class="value negative">{len(sell)}</div><div class="label">卖出</div></div>
@@ -337,7 +412,7 @@ th {{ background: #f8f9fa; color: #555; }} th:nth-child(-n+4),td:nth-child(-n+4)
 
 def main() -> None:
     args = parse_args()
-    release_id, release_dir = resolve_release(args.portfolio_release)
+    release_id, release_dir = resolve_release(args.portfolio_release, args.frequency)
     weights_path = release_dir / "weights.parquet"
     summary_path = release_dir / "portfolio_summary.parquet"
     if not weights_path.exists() or not summary_path.exists():
@@ -347,6 +422,10 @@ def main() -> None:
     summary = pd.read_parquet(summary_path)
     weights["signal_date"] = pd.to_datetime(weights["signal_date"]).dt.normalize()
     summary["signal_date"] = pd.to_datetime(summary["signal_date"]).dt.normalize()
+    risk_release, risk = load_risk_history(
+        args.risk_release, release_id, args.frequency
+    )
+    weights, summary = apply_risk_scaling(weights, summary, risk)
     previous_date, current_date = choose_dates(
         pd.DatetimeIndex(weights["signal_date"].unique()),
         args.previous_date,
@@ -375,12 +454,13 @@ def main() -> None:
     )
 
     report_id = args.report_id or f"rebalance_{current_date:%Y%m%d}"
-    report_dir = REPORTS_ROOT / report_id
+    track_reports_root = REPORTS_ROOT / args.frequency
+    report_dir = track_reports_root / report_id
     if report_dir.exists():
         if not args.overwrite:
             raise FileExistsError(f"报告已存在: {report_dir}；如需重生成请添加 --overwrite")
         shutil.rmtree(report_dir)
-    temp_dir = REPORTS_ROOT / f".{report_id}.tmp"
+    temp_dir = track_reports_root / f".{report_id}.tmp"
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
     temp_dir.mkdir(parents=True)
@@ -437,6 +517,7 @@ def main() -> None:
         actions,
         float(args.minimum_rebalance_weight),
         planned_execution_date,
+        args.frequency,
     )
     (temp_dir / "rebalance_report.html").write_text(report_html, encoding="utf-8")
     temp_dir.replace(report_dir)
@@ -460,6 +541,9 @@ def main() -> None:
                 "buy": int(counts.get("新买入", 0)),
                 "minimum_rebalance_weight": float(args.minimum_rebalance_weight),
                 "threshold_skipped": int(actions["threshold_skipped"].sum()),
+                "rebalance_frequency": args.frequency,
+                "risk_release": risk_release,
+                "current_risk_scale": float(current_summary["risk_scale"]),
             },
             ensure_ascii=False,
             indent=2,

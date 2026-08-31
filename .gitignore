@@ -46,6 +46,7 @@ exports/
 outputs/
 reports/
 logs/
+pipeline_logs/
 *.log
 
 # 展示仓库只保留主动筛选的结果材料
@@ -53,4 +54,3 @@ logs/
 !results/**
 !sample_data/
 !sample_data/**
-

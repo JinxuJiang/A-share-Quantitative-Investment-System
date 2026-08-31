@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""将已验收的市场模型发布为稳定的周频仓位信号。"""
+"""将已验收的市场模型发布为稳定的每日仓位信号。"""
 
 from __future__ import annotations
 
@@ -30,7 +30,6 @@ SUPPORTED_MODELS = ("ridge", "cnn_gru")
 
 sys.path.insert(0, str(LAYER4_DIR))
 from backtest import (  # noqa: E402
-    build_decision_dates,
     build_rebalance_plan,
     common_prediction_dates,
     load_predictions,
@@ -133,11 +132,12 @@ def build_market_signal(model_name: str, signal_config: dict) -> tuple[pd.DataFr
         signal_config["backtest"],
         default_end_date=common_dates.max(),
     )
-    decision_dates = build_decision_dates(
-        common_dates,
-        price.index,
-        str(signal_config["backtest"]["rebalance_frequency"]),
-    )
+    decision_dates = [
+        pd.Timestamp(value)
+        for value in common_dates.intersection(price.index).sort_values()
+    ]
+    if not decision_dates:
+        raise ValueError("配置价格区间内没有与预测重合的每日交易日期")
     plan = build_rebalance_plan(
         model_name,
         prediction,
@@ -242,11 +242,33 @@ def publish(model_name: str, release_id: str, run_id: str, set_current: bool = F
 
     releases_dir = EXPORT_ROOT / "releases"
     release_dir = releases_dir / release_id
+    published_at = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds")
     if release_dir.exists():
-        raise FileExistsError(f"release已存在，禁止覆盖: {release_dir}")
+        manifest_path = release_dir / "manifest.json"
+        output_path = release_dir / "market_signal.parquet"
+        if not manifest_path.is_file() or not output_path.is_file():
+            raise FileExistsError(f"release已存在但不完整，禁止覆盖: {release_dir}")
+        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+        same_source = (
+            existing.get("release_id") == release_id
+            and existing.get("source_model") == model_name
+            and existing.get("source_backtest_run_id") == run_id
+            and existing.get("output_sha256") == sha256_file(output_path)
+        )
+        if not same_source:
+            raise FileExistsError(f"同名release的来源或文件不同，禁止覆盖: {release_dir}")
+        if set_current:
+            current = {
+                "schema_version": "market_signal_current_v1",
+                "release_id": release_id,
+                "manifest": f"releases/{release_id}/manifest.json",
+                "updated_at": published_at,
+            }
+            write_json_atomic(EXPORT_ROOT / "current.json", current)
+        print(f"release已完整存在且哈希一致，安全复用: {release_dir}")
+        return release_dir
     releases_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(tempfile.mkdtemp(prefix=f".{release_id}.", dir=releases_dir))
-    published_at = datetime.now(ZoneInfo("Asia/Shanghai")).isoformat(timespec="seconds")
 
     try:
         signal, source_path = build_market_signal(model_name, signal_config)
@@ -283,7 +305,10 @@ def publish(model_name: str, release_id: str, run_id: str, set_current: bool = F
                 "min_periods": int(smoothing_config["min_periods"]),
             },
             "signal_policy": {
-                "rebalance_frequency": backtest_config["rebalance_frequency"],
+                "signal_frequency": "daily_trading_session",
+                "source_backtest_rebalance_frequency": backtest_config[
+                    "rebalance_frequency"
+                ],
                 "standardization_window": int(backtest_config["standardization_window"]),
                 "standardization_uses_current_observation": False,
                 "forecast_threshold": float(backtest_config["signal_threshold"]),

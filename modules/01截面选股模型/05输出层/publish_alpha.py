@@ -188,12 +188,34 @@ def publish(exp_id: str, release_id: str) -> Path:
 
     releases_dir = EXPORT_ROOT / "releases"
     release_dir = releases_dir / release_id
+    published_at = datetime.now().astimezone().isoformat(timespec="seconds")
     if release_dir.exists():
-        raise FileExistsError(f"release 已存在，禁止覆盖: {release_dir}")
+        manifest_path = release_dir / "manifest.json"
+        output_path = release_dir / "stock_alpha.parquet"
+        if not manifest_path.is_file() or not output_path.is_file():
+            raise FileExistsError(f"release 已存在但不完整，禁止覆盖: {release_dir}")
+        existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+        same_source = (
+            existing.get("release_id") == release_id
+            and existing.get("source_exp_id") == exp_id
+            and existing.get("source_file_sha256") == sha256_file(source_path)
+            and existing.get("source_config_sha256") == sha256_file(config_path)
+            and existing.get("output_sha256") == sha256_file(output_path)
+        )
+        if not same_source:
+            raise FileExistsError(f"同名 release 的来源或文件不同，禁止覆盖: {release_dir}")
+        current = {
+            "schema_version": "stock_alpha_current_v1",
+            "release_id": release_id,
+            "manifest": f"releases/{release_id}/manifest.json",
+            "updated_at": published_at,
+        }
+        write_json_atomic(EXPORT_ROOT / "current.json", current)
+        print(f"release 已完整存在且哈希一致，安全复用: {release_dir}")
+        return release_dir
 
     releases_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(tempfile.mkdtemp(prefix=f".{release_id}.", dir=releases_dir))
-    published_at = datetime.now().astimezone().isoformat(timespec="seconds")
 
     try:
         alpha = build_stock_alpha(source_path, horizon_days)

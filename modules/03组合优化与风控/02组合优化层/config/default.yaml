@@ -1,8 +1,9 @@
-schema_version: portfolio_optimization_config_v2
+schema_version: portfolio_optimization_config_v3
 
 paths:
   decision_output_root: ../01组合决策输入层/outputs
   output_root: outputs
+  trade_schedule: ../01组合决策输入层/data/metadata/trade_schedule.parquet
 
 objective:
   risk_weight: 1.0

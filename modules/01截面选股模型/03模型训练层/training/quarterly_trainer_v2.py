@@ -353,7 +353,7 @@ class QuarterlyTrainerV2:
         pred_df = self._attach_actual_return(pred_df, split.pred_dates)
         return pred_df
 
-    def _save_summary(self):
+    def _save_summary(self, pred_df: Optional[pd.DataFrame] = None):
         if not self.summary_rows and self.existing_summary is None:
             return
 
@@ -361,7 +361,33 @@ class QuarterlyTrainerV2:
         if self.freeze_enabled and self.existing_summary is not None:
             pieces.append(self.existing_summary)
         if self.summary_rows:
-            pieces.append(pd.DataFrame(self.summary_rows))
+            new_summary = pd.DataFrame(self.summary_rows)
+
+            # A frozen quarterly model can receive only a few new prediction
+            # dates during a weekly update.  Report metrics for the complete
+            # quarter accumulated so far, rather than replacing the existing
+            # quarter summary with metrics calculated from only the new days.
+            if pred_df is not None and "model_period" in pred_df.columns:
+                for row_index, model_period in new_summary["model_period"].items():
+                    period_predictions = pred_df[pred_df["model_period"] == model_period]
+                    if period_predictions.empty:
+                        continue
+                    metrics = self._calc_metrics(period_predictions)
+                    new_summary.loc[row_index, "n_pred_samples"] = len(period_predictions)
+                    for key, value in metrics.items():
+                        new_summary.loc[row_index, key] = value
+
+            if self.existing_summary is not None and "model_period" in self.existing_summary.columns:
+                existing_by_period = self.existing_summary.set_index("model_period")
+                for row_index, model_period in new_summary["model_period"].items():
+                    if model_period not in existing_by_period.index:
+                        continue
+                    old_row = existing_by_period.loc[model_period]
+                    for column in ("n_train_samples", "n_valid_samples"):
+                        if column in new_summary.columns and pd.isna(new_summary.loc[row_index, column]):
+                            new_summary.loc[row_index, column] = old_row.get(column, np.nan)
+
+            pieces.append(new_summary)
         summary_df = pd.concat(pieces, axis=0, ignore_index=True)
         if "model_period" in summary_df.columns:
             summary_df = summary_df.drop_duplicates(["model_period"], keep="last")
@@ -783,7 +809,7 @@ class QuarterlyTrainerV2:
         pred_df = self._save_predictions()
         if len(pred_df) > 0:
             self._save_smoothed_predictions(pred_df)
-        self._save_summary()
+        self._save_summary(pred_df)
         self._save_manifest()
 
         logger.info("=" * 80)

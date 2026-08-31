@@ -111,8 +111,7 @@ def clean_financial_factor(factor_name: str, factor_df: pd.DataFrame, processed_
     # 加载行业数据
     industry_file = processed_data_path / "financial_data" / "industry.parquet"
     if not industry_file.exists():
-        print(f"  警告: 行业数据不存在，跳过清洗")
-        return factor_df
+        raise FileNotFoundError(f"行业数据不存在，无法发布已清洗因子: {industry_file}")
     
     industry_df = load_factor(industry_file)
     
@@ -121,8 +120,9 @@ def clean_financial_factor(factor_name: str, factor_df: pd.DataFrame, processed_
     cap_stk_file = processed_data_path / "financial_data" / "cap_stk.parquet"
     
     if not close_file.exists() or not cap_stk_file.exists():
-        print(f"  警告: 市值数据不完整，跳过清洗")
-        return factor_df
+        raise FileNotFoundError(
+            f"市值数据不完整，无法发布已清洗因子: {close_file}, {cap_stk_file}"
+        )
     
     close_df = load_factor(close_file)
     cap_stk_df = load_factor(cap_stk_file)
@@ -138,8 +138,7 @@ def clean_financial_factor(factor_name: str, factor_df: pd.DataFrame, processed_
     common_dates = factor_df.index.intersection(industry_df.index).intersection(market_cap_df.index)
     
     if len(common_stocks) == 0 or len(common_dates) == 0:
-        print(f"  警告: 无共同数据，跳过清洗")
-        return factor_df
+        raise ValueError("因子、行业和市值之间没有共同股票或共同日期")
     
     factor_df = factor_df.loc[common_dates, common_stocks]
     industry_df = industry_df.loc[common_dates, common_stocks]
@@ -147,20 +146,15 @@ def clean_financial_factor(factor_name: str, factor_df: pd.DataFrame, processed_
     
     print(f"  共同股票数: {len(common_stocks)}, 共同交易日: {len(common_dates)}")
     
-    # 清洗
-    try:
-        factor_clean = clean_factor_wide(
-            factor_df,
-            industry_df,
-            market_cap_df,
-            steps=['outlier', 'missing', 'neutralize', 'standardize'],
-            verbose=False
-        )
-        print(f"  清洗完成")
-        return factor_clean
-    except Exception as e:
-        print(f"  清洗失败: {e}，返回原始因子")
-        return factor_df
+    factor_clean = clean_factor_wide(
+        factor_df,
+        industry_df,
+        market_cap_df,
+        steps=['outlier', 'missing', 'neutralize', 'standardize'],
+        verbose=False
+    )
+    print(f"  清洗完成")
+    return factor_clean
 
 
 def compute_single_factor(factor_name: str, factor_info: dict,
@@ -223,13 +217,16 @@ def compute_single_factor(factor_name: str, factor_info: dict,
     
     if skip_clean:
         factor_clean = factor_df
-        print(f"\n[跳过清洗] 直接保存原始因子")
+        output_root = calculator.processed_data_path / "raw_factors" / "financial"
+        print(f"\n[跳过清洗] 原始因子仅保存到诊断目录")
     else:
         processed_data_path = calculator.processed_data_path
         factor_clean = clean_financial_factor(factor_name, factor_df, processed_data_path)
+        output_root = calculator.output_path
     
     # 保存
-    output_file = calculator.output_path / f"{factor_name}.parquet"
+    output_root.mkdir(parents=True, exist_ok=True)
+    output_file = output_root / f"{factor_name}.parquet"
     
     dates_arr = factor_clean.index
     arrays = [pa.array(dates_arr, type=pa.timestamp('ns'))]
@@ -245,7 +242,9 @@ def compute_single_factor(factor_name: str, factor_info: dict,
         names.append(col)
     
     table = pa.table(arrays, names=names)
-    pq.write_table(table, output_file)
+    temporary_file = output_file.with_suffix(".tmp.parquet")
+    pq.write_table(table, temporary_file)
+    temporary_file.replace(output_file)
     
     print(f"\n已保存: {output_file}")
     print(f"  维度: {table.num_rows} 行 × {table.num_columns} 列")
@@ -438,6 +437,7 @@ def main():
             print(f"\n计算因子 {factor_name} 失败: {e}")
             import traceback
             traceback.print_exc()
+            return 1
     
     # 总结
     print("\n" + "=" * 60)

@@ -5,6 +5,7 @@
 一键运行所有因子计算流程
 """
 
+import argparse
 import subprocess
 import sys
 import time
@@ -48,6 +49,13 @@ def run_step(name, script_path, args_list):
 
 
 def main():
+    parser = argparse.ArgumentParser(description="因子库全量更新")
+    parser.add_argument(
+        "--skip-clean",
+        action="store_true",
+        help="仅生成原始诊断因子，并保存到 raw_factors；不会覆盖正式因子",
+    )
+    args = parser.parse_args()
     print("="*60)
     print("因子库全量更新")
     print(f"开始时间: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
@@ -56,11 +64,14 @@ def main():
     total_start = time.time()
     
     for name, script, args_list in STEPS:
-        success, elapsed = run_step(name, script, args_list)
+        step_args = list(args_list)
+        if args.skip_clean and name in {"技术因子", "财务因子"}:
+            step_args.append("--skip-clean")
+        success, elapsed = run_step(name, script, step_args)
         if not success:
             print(f"\n❌ 更新中断！请检查错误。")
             return 1
-    
+
     total_elapsed = time.time() - total_start
     
     print(f"\n{'='*60}")

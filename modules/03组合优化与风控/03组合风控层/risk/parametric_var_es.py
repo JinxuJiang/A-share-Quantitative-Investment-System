@@ -58,3 +58,15 @@ class ParametricNormalVarEs:
             "metrics": metrics,
         }
 
+
+def calculate_var_scale(value_at_risk: float, var_budget: float) -> float:
+    """返回只减仓、不加杠杆的 VaR 仓位缩放系数。"""
+    current_var = float(value_at_risk)
+    budget = float(var_budget)
+    if not np.isfinite(current_var) or current_var < 0.0:
+        raise ValueError("VaR 必须是有限的非负数")
+    if not np.isfinite(budget) or budget <= 0.0:
+        raise ValueError("VaR 预算必须是有限的正数")
+    if current_var == 0.0:
+        return 1.0
+    return float(min(1.0, budget / current_var))

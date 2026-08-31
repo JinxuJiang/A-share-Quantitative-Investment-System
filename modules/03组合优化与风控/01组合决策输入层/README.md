@@ -1,8 +1,8 @@
 # 01 组合决策输入层
 
-本层同步截面 Alpha、市场周度预测和全量行情，然后为全部共同周度日期生成可供优化与回测使用的历史决策输入。
+本层同步截面 Alpha、市场日度预测和全量行情，然后为全部共同交易日生成可供优化与回测使用的日度历史决策输入。
 
-每一期都按照官方交易日历取当周最后一个实际交易日，只使用该日及以前的数据：过滤主板、ST、停牌及历史不足股票，重算 `eligible_alpha_rank`，选出 Top 20，再用过去 252 日收益估计 Ledoit–Wolf 收缩协方差。
+每一期都按照官方 A 股交易日历确认交易日，只使用该日及以前的数据：过滤主板、ST、停牌及历史不足股票，重算 `eligible_alpha_rank`，选出 Top 30，再用过去 252 日收益估计 Ledoit–Wolf 收缩协方差。周度和月度日期选择留给 02 层处理。
 
 ## 运行
 
@@ -20,7 +20,7 @@ python .\01组合决策输入层\run_pipeline.py --skip-sync --start-date 2024-0
 ## 正式输出
 
 ```text
-outputs/releases/decision_history_起始日_结束日_v1/
+outputs/releases/decision_daily_history_起始日_结束日_v1/
 ├─ decision_inputs.parquet
 ├─ covariance.parquet
 ├─ period_summary.parquet
@@ -33,4 +33,4 @@ outputs/releases/decision_history_起始日_结束日_v1/
 - `period_summary.parquet`：每期一行的股票池数量、市场仓位、收缩系数和校验结果。
 - `current.json`：指向当前完整历史版本。
 
-Alpha 与市场模型只按 `signal_date` 合并。该日期表示周末交易日收盘后形成决策；下一交易日开盘成交由后续回测层处理。
+Alpha 与市场模型只按 `signal_date` 合并。该日期表示交易日收盘后形成决策；下一交易日开盘成交由后续回测层处理。

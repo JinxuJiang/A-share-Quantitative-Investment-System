@@ -4,6 +4,20 @@
 
 ---
 
+## 运行安全约定
+
+正式运行采用 fail-closed：行业、市值或清洗步骤缺失/异常时立即返回非零状态，不再把未经清洗的原始因子伪装成正式结果。每个正式 Parquet 文件先写入临时文件，成功后再原子替换，避免中断产生半写文件。
+
+如需诊断原始因子，显式运行：
+
+```powershell
+python .\02因子库\update_all.py --skip-clean
+```
+
+该模式只写入 `processed_data/raw_factors/`，不会覆盖 `processed_data/factors/` 下的正式因子。
+
+---
+
 ## ✨ 核心能力
 
 | 能力 | 说明 |

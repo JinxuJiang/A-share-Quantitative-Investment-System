@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import importlib.util
+import sys
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 import pandas as pd
 
-from generate_rebalance_report import build_actions, format_rank
+MODULE_PATH = Path(__file__).with_name("generate_rebalance_report.py")
+SPEC = importlib.util.spec_from_file_location("rebalance_report", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+    raise ImportError(f"无法加载调仓报告模块: {MODULE_PATH}")
+REPORT_MODULE = importlib.util.module_from_spec(SPEC)
+sys.modules["rebalance_report"] = REPORT_MODULE
+SPEC.loader.exec_module(REPORT_MODULE)
+apply_risk_scaling = REPORT_MODULE.apply_risk_scaling
+build_actions = REPORT_MODULE.build_actions
+format_rank = REPORT_MODULE.format_rank
 
 
 class RebalanceThresholdTests(unittest.TestCase):
@@ -24,7 +35,7 @@ class RebalanceThresholdTests(unittest.TestCase):
         )
 
     @patch(
-        "generate_rebalance_report.STOCK_INFO_PATH",
+        "rebalance_report.STOCK_INFO_PATH",
         Path("__missing_stock_info_for_test__.parquet"),
     )
     def test_small_held_change_is_skipped_only_when_exposure_is_unchanged(self) -> None:
@@ -56,6 +67,39 @@ class RebalanceThresholdTests(unittest.TestCase):
     def test_candidate_pool_size_must_be_positive(self) -> None:
         with self.assertRaisesRegex(ValueError, "candidate_stock_count"):
             format_rank(float("nan"), 0)
+
+    def test_rebalance_weights_use_layer_three_risk_scale(self) -> None:
+        weights = pd.DataFrame(
+            {
+                "signal_date": [self.current, self.current],
+                "stock_code": ["000001.XSHE", "000002.XSHE"],
+                "target_weight": [0.30, 0.60],
+            }
+        )
+        summary = pd.DataFrame(
+            {
+                "signal_date": [self.current],
+                "stock_exposure": [0.90],
+                "cash_weight": [0.10],
+            }
+        )
+        risk = pd.DataFrame(
+            {
+                "signal_date": [self.current],
+                "risk_scale": [0.75],
+                "scaled_stock_exposure": [0.675],
+                "scaled_cash_weight": [0.325],
+                "var_budget": [0.15],
+            }
+        )
+        scaled_weights, scaled_summary = apply_risk_scaling(
+            weights, summary, risk
+        )
+        self.assertAlmostEqual(float(scaled_weights["target_weight"].sum()), 0.675)
+        self.assertAlmostEqual(
+            float(scaled_summary.iloc[0]["stock_exposure"]), 0.675
+        )
+        self.assertAlmostEqual(float(scaled_summary.iloc[0]["cash_weight"]), 0.325)
 
 
 if __name__ == "__main__":

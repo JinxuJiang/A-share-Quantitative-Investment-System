@@ -1,6 +1,6 @@
 # 05 输出层
 
-本层将已经完成训练、版本化回测并通过验收的市场模型发布为稳定的周频仓位信号，供组合优化与风控项目读取。
+本层将已经完成训练、版本化回测并通过验收的市场模型发布为稳定的日度仓位信号，供组合优化与风控项目读取。发布频率与模型 20 日预测标签相互独立：模型仍预测未来 20 日，但每个交易日都会生成一条可供下游选择的仓位信号。
 
 ## 发布约束
 
@@ -16,7 +16,7 @@
 python 05输出层/publish_market_signal.py `
   --model ridge `
   --run-id bull90_neutral60_bear30_v1 `
-  --release-id market_ridge_20d_weekly_20260814_906030_v1 `
+  --release-id market_ridge_20d_daily_20260814_906030_v1 `
   --set-current
 ```
 
@@ -26,7 +26,7 @@ python 05输出层/publish_market_signal.py `
 python 05输出层/publish_market_signal.py `
   --model cnn_gru `
   --run-id bull90_neutral60_bear30_v1 `
-  --release-id market_cnn_gru_20d_weekly_20260814_906030_v1
+  --release-id market_cnn_gru_20d_daily_20260814_906030_v1
 ```
 
 ## 输出结构
@@ -55,3 +55,5 @@ python 05输出层/publish_market_signal.py `
 - `horizon_days`：预测周期，当前为20。
 
 下游必须遵守 `signal_available_after=market_close` 和 `execution_lag_trading_days=1`，不得将 T 日收盘后信号用于 T 日开盘成交。
+
+下游周度或月度调仓由组合系统根据官方交易日历选择完整结束的交易周或交易月；本层不再提前删除其他交易日信号。

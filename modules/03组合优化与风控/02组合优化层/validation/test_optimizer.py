@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import sys
 import unittest
 from pathlib import Path
@@ -10,12 +11,48 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+VALIDATION_ROOT = ROOT / "validation"
+if str(VALIDATION_ROOT) not in sys.path:
+    sys.path.insert(0, str(VALIDATION_ROOT))
 
 from optimization.alpha_risk_optimizer import AlphaRiskOptimizer
-from validation.optimization_validator import OptimizationValidator
+from optimization_validator import OptimizationValidator
+
+WORKFLOW_SPEC = importlib.util.spec_from_file_location(
+    "portfolio_optimization_workflow", ROOT / "optimization.py"
+)
+assert WORKFLOW_SPEC is not None and WORKFLOW_SPEC.loader is not None
+WORKFLOW = importlib.util.module_from_spec(WORKFLOW_SPEC)
+WORKFLOW_SPEC.loader.exec_module(WORKFLOW)
 
 
 class OptimizerTests(unittest.TestCase):
+    def test_rebalance_dates_require_a_completed_official_period(self) -> None:
+        schedule = pd.DataFrame(
+            {
+                "cal_date": [
+                    "20260126",
+                    "20260127",
+                    "20260128",
+                    "20260129",
+                    "20260130",
+                    "20260202",
+                    "20260203",
+                    "20260204",
+                    "20260205",
+                    "20260206",
+                ],
+                "is_open": [1] * 10,
+            }
+        )
+        available = pd.date_range("2026-01-26", "2026-02-05", freq="B")
+
+        weekly = WORKFLOW.select_rebalance_dates(available, schedule, "weekly")
+        monthly = WORKFLOW.select_rebalance_dates(available, schedule, "monthly")
+
+        self.assertEqual(weekly, [pd.Timestamp("2026-01-30")])
+        self.assertEqual(monthly, [pd.Timestamp("2026-01-30")])
+
     def test_optimizer_respects_constraints(self) -> None:
         alpha = np.array([2.0, 1.0, 0.0, -1.0])
         covariance = np.array(

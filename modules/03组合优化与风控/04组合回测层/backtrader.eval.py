@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""读取组合优化历史权重，使用 Backtrader 进行周度账户回测。
+"""读取组合优化历史权重，使用 Backtrader 进行周度或月度账户回测。
 
 运行：
     python .\04组合回测层\backtrader.eval.py
@@ -37,6 +37,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="回测完整历史优化权重")
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--portfolio-release", help="默认读取02层current历史版本")
+    parser.add_argument("--risk-release", help="默认读取与组合匹配的03层current版本")
+    parser.add_argument(
+        "--frequency", choices=("weekly", "monthly"), default="weekly"
+    )
     parser.add_argument("--report-id", help="默认根据组合版本和成本场景生成")
     parser.add_argument(
         "--overwrite",
@@ -53,6 +57,59 @@ def resolve_path(value: str) -> Path:
 
 def read_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_matching_risk(
+    risk_root: Path,
+    frequency: str,
+    portfolio_release: str,
+    risk_release: str | None,
+) -> tuple[dict, pd.DataFrame]:
+    track_root = risk_root / frequency
+    if risk_release is None:
+        current = read_json(track_root / "current.json")
+        if current.get("schema_version") != "risk_history_current_v2":
+            raise ValueError("03层 current 不是分频风险历史")
+        risk_release = str(current["release_id"])
+    release_dir = track_root / "releases" / risk_release
+    manifest = read_json(release_dir / "manifest.json")
+    if manifest.get("schema_version") != "risk_history_v2":
+        raise ValueError("03层 manifest 不是 risk_history_v2")
+    if manifest.get("rebalance_frequency") != frequency:
+        raise ValueError("风险版本频率与回测频率不一致")
+    if manifest.get("source_portfolio_release") != portfolio_release:
+        raise ValueError("风险版本不是由所选组合版本计算得到")
+    risk = pd.read_parquet(release_dir / "risk.parquet")
+    risk["signal_date"] = pd.to_datetime(risk["signal_date"]).dt.normalize()
+    return manifest, risk
+
+
+def apply_risk_scaling(
+    weights: pd.DataFrame, risk_history: pd.DataFrame, enabled: bool
+) -> pd.DataFrame:
+    """仅缩放股票总仓位，不改变股票之间的相对权重。"""
+    result = weights.copy()
+    result["unscaled_target_weight"] = result["target_weight"].astype(float)
+    if not enabled:
+        result["risk_scale"] = 1.0
+        return result
+    required = {"signal_date", "risk_scale"}
+    missing = required - set(risk_history.columns)
+    if missing:
+        raise ValueError(f"风险历史缺少缩放字段，请重跑03层: {sorted(missing)}")
+    scale_rows = risk_history[["signal_date", "risk_scale"]].copy()
+    if scale_rows["signal_date"].duplicated().any():
+        raise ValueError("风险历史存在重复 signal_date")
+    scale_map = scale_rows.set_index("signal_date")["risk_scale"]
+    result["risk_scale"] = result["signal_date"].map(scale_map)
+    if result["risk_scale"].isna().any():
+        raise ValueError("风险历史没有覆盖全部组合信号日期")
+    if not result["risk_scale"].between(0.0, 1.0, inclusive="both").all():
+        raise ValueError("风险缩放系数必须位于[0,1]")
+    result["target_weight"] = (
+        result["unscaled_target_weight"] * result["risk_scale"]
+    )
+    return result
 
 
 def read_wide(path: Path, stock_codes: list[str]) -> pd.DataFrame:
@@ -211,6 +268,10 @@ class PortfolioWeightStrategy(bt.Strategy):
                 "stock_code": stock_code,
                 "selection_rank": meta.get("selection_rank"),
                 "target_weight": target_weight,
+                "unscaled_target_weight": meta.get(
+                    "unscaled_target_weight", target_weight
+                ),
+                "risk_scale": meta.get("risk_scale", 1.0),
                 "account_value_at_open": account_value,
                 "open_price": None,
                 "current_shares": current_shares,
@@ -390,6 +451,8 @@ def create_report(
     total_traded_amount: float,
     rebalance_records: pd.DataFrame,
     trades: pd.DataFrame,
+    frequency: str,
+    latest_risk: pd.Series,
 ) -> None:
     combined = nav.set_index("date").join(benchmark, how="left")
     figure, axes = plt.subplots(
@@ -427,6 +490,7 @@ def create_report(
     blocked = int(rebalance_records["status"].isin(["SUSPENDED", "NO_OPEN_PRICE", "INSUFFICIENT_CASH"]).sum())
     turnover = total_traded_amount / max(float(nav["value"].mean()), 1.0)
     cost_cfg = config["costs"]
+    frequency_label = "周度" if frequency == "weekly" else "月度"
     total_return_class = "good" if metrics["total_return"] > 0 else "bad"
     annual_return_class = "good" if metrics["annual_return"] > 0 else "bad"
     sharpe_class = "good" if metrics["sharpe"] > 1 else "warning" if metrics["sharpe"] > 0.5 else "bad"
@@ -486,8 +550,9 @@ img {{ max-width: 100%; margin: 20px 0; border: 1px solid #ddd; border-radius: 4
 <ul>
   <li><strong>组合版本：</strong>{html.escape(portfolio_release)}</li>
   <li><strong>回测区间：</strong>{combined.index.min().date()} ～ {combined.index.max().date()}</li>
-  <li><strong>调仓方式：</strong>每周最后一个交易日收盘生成信号，下一交易日开盘成交</li>
+  <li><strong>调仓方式：</strong>{frequency_label}最后一个交易日收盘生成信号，下一交易日开盘成交</li>
   <li><strong>目标仓位：</strong>由上游市场模型输出 0% / 45% / 90% 三档股票仓位</li>
+  <li><strong>VaR缩放：</strong>{float(latest_risk['risk_scale']):.2f}x（预算 {float(latest_risk['var_budget']):.2%}；当前配置 {'启用' if bool(config.get('risk_scaling', {}).get('enabled', False)) else '关闭'}）</li>
   <li><strong>交易单位：</strong>100 股整数倍</li>
   <li><strong>初始资金：</strong>{metrics['initial_cash']:,.2f} 元</li>
   <li><strong>交易成本：</strong>买入 {cost_cfg['buy_cost_rate']:.2%}，卖出 {cost_cfg['sell_cost_rate']:.2%}，最低 {cost_cfg['minimum_fee']:.2f} 元/笔</li>
@@ -516,21 +581,43 @@ def main() -> None:
     if int(config["execution"]["board_lot"]) != 100:
         raise ValueError("第一版固定使用100股交易单位")
 
-    portfolio_output = resolve_path(config["paths"]["portfolio_output_root"])
+    frequency = args.frequency
+    portfolio_output = (
+        resolve_path(config["paths"]["portfolio_output_root"]) / frequency
+    )
     portfolio_release = args.portfolio_release
     if not portfolio_release:
         current = read_json(portfolio_output / "current.json")
-        if current.get("schema_version") != "portfolio_history_current_v1":
-            raise ValueError("02层current不是完整历史版本")
+        if current.get("schema_version") != "portfolio_history_current_v2":
+            raise ValueError("02层 current 不是分频组合历史")
         portfolio_release = str(current["release_id"])
     portfolio_dir = portfolio_output / "releases" / portfolio_release
     portfolio_manifest = read_json(portfolio_dir / "manifest.json")
-    if portfolio_manifest.get("schema_version") != "portfolio_history_v1":
-        raise ValueError("02层manifest不是portfolio_history_v1")
+    if portfolio_manifest.get("schema_version") != "portfolio_history_v2":
+        raise ValueError("02层 manifest 不是 portfolio_history_v2")
+    if portfolio_manifest.get("rebalance_frequency") != frequency:
+        raise ValueError("组合版本频率与回测频率不一致")
     weights = pd.read_parquet(portfolio_dir / "weights.parquet")
     weights["signal_date"] = pd.to_datetime(weights["signal_date"]).dt.normalize()
     if weights.duplicated(["signal_date", "stock_code"]).any():
         raise ValueError("weights存在重复日期+股票")
+    risk_manifest, risk_history = load_matching_risk(
+        resolve_path(config["paths"]["risk_output_root"]),
+        frequency,
+        portfolio_release,
+        args.risk_release,
+    )
+    if not set(weights["signal_date"].unique()).issubset(
+        set(risk_history["signal_date"].unique())
+    ):
+        raise ValueError("风险历史没有覆盖全部组合信号日期")
+    risk_scaling_enabled = bool(
+        config.get("risk_scaling", {}).get("enabled", False)
+    )
+    weights = apply_risk_scaling(
+        weights, risk_history, enabled=risk_scaling_enabled
+    )
+    latest_risk = risk_history.sort_values("signal_date").iloc[-1]
 
     data_root = resolve_path(config["paths"]["decision_data_root"])
     stock_codes = sorted(weights["stock_code"].astype(str).unique())
@@ -562,6 +649,8 @@ def main() -> None:
                     "stock_code": str(row.stock_code),
                     "selection_rank": int(row.selection_rank),
                     "target_weight": float(row.target_weight),
+                    "unscaled_target_weight": float(row.unscaled_target_weight),
+                    "risk_scale": float(row.risk_scale),
                     "account_value_at_open": None,
                     "open_price": None,
                     "current_shares": None,
@@ -659,7 +748,7 @@ def main() -> None:
     )
 
     report_id = args.report_id or portfolio_release.replace("portfolio_", "portfolio_") + "_high_cost"
-    reports_root = resolve_path(config["paths"]["reports_root"])
+    reports_root = resolve_path(config["paths"]["reports_root"]) / frequency
     report_dir = reports_root / report_id
     if report_dir.exists():
         if not args.overwrite:
@@ -692,6 +781,8 @@ def main() -> None:
         strategy.total_traded_amount,
         rebalance_frame,
         trade_frame,
+        frequency,
+        latest_risk,
     )
     os.replace(temp_dir, report_dir)
     print(f"回测报告完成: {report_dir / 'backtest_report.html'}")
@@ -706,6 +797,10 @@ def main() -> None:
                 "transaction_cost": strategy.total_transaction_cost,
                 "trade_count": len(trade_frame),
                 "pending_signal_dates": [date.date().isoformat() for date in pending_dates],
+                "rebalance_frequency": frequency,
+                "risk_release": risk_manifest["release_id"],
+                "risk_scaling_enabled": risk_scaling_enabled,
+                "minimum_risk_scale": float(weights["risk_scale"].min()),
             },
             ensure_ascii=False,
             indent=2,

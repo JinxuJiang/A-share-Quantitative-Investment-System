@@ -1,8 +1,8 @@
 schema_version: decision_input_config_v1
 
 paths:
-  cross_section_project: ../截面多因子模型
-  market_project: ../市场预测模型
+  cross_section_project: ../01截面选股模型
+  market_project: ../02市场仓位模型
   local_data_root: data
   output_root: outputs
 

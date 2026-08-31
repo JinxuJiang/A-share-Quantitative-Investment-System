@@ -36,6 +36,11 @@ class MarketSignalReleaseReader:
             raise ValueError("市场current schema_version不是market_signal_current_v1")
         if manifest.get("schema_version") != "market_signal_v1":
             raise ValueError("市场manifest schema_version不是market_signal_v1")
+        if (
+            manifest.get("signal_policy", {}).get("signal_frequency")
+            != "daily_trading_session"
+        ):
+            raise ValueError("市场信号发布必须覆盖每日交易日")
         if current.get("release_id") != manifest.get("release_id"):
             raise ValueError("市场current与manifest的release_id不一致")
         if sha256_file(self.data_path) != manifest.get("output_sha256"):

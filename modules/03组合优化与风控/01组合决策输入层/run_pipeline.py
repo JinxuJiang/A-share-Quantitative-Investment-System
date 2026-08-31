@@ -2,7 +2,7 @@
 
 一次正式运行必须完成以下两个阶段，而且顺序不能颠倒：
     1. 从截面模型、市场模型同步正式输出及全量行情；
-    2. 基于本地数据构建并发布全部周度决策历史表。
+    2. 基于本地数据构建并发布全部日度决策历史表。
 
 在 qf 环境中，日常只需要执行：
     python 01组合决策输入层/run_pipeline.py
@@ -34,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     """解析统一入口参数，并保证两种单阶段模式不能同时启用。"""
 
     parser = argparse.ArgumentParser(
-        description="运行组合决策输入层：先同步源数据，再构建全部周度历史表",
+        description="运行组合决策输入层：先同步源数据，再构建全部日度历史表",
         epilog=(
             "正式运行（两个阶段都会执行）：\n"
             "  python 01组合决策输入层/run_pipeline.py\n\n"
@@ -85,7 +85,7 @@ def main() -> None:
     if args.sync_only:
         return
 
-    # 构造第二阶段命令。默认构建全部共同周度日期。
+    # 构造第二阶段命令。默认构建全部共同交易日。
     build_command = [
         sys.executable,
         str(BUILD_SCRIPT),

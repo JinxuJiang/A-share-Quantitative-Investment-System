@@ -10,12 +10,26 @@ import pandas as pd
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+VALIDATION_ROOT = ROOT / "validation"
+if str(VALIDATION_ROOT) not in sys.path:
+    sys.path.insert(0, str(VALIDATION_ROOT))
 
-from risk.parametric_var_es import ParametricNormalVarEs
-from validation.risk_validator import RiskValidator
+from risk.parametric_var_es import ParametricNormalVarEs, calculate_var_scale
+from risk_validator import RiskValidator
 
 
 class VarEsTests(unittest.TestCase):
+    def test_var_scale_only_reduces_exposure_above_budget(self) -> None:
+        self.assertEqual(calculate_var_scale(0.10, 0.15), 1.0)
+        self.assertAlmostEqual(calculate_var_scale(0.20, 0.15), 0.75)
+        self.assertEqual(calculate_var_scale(0.0, 0.15), 1.0)
+
+    def test_var_scale_rejects_invalid_inputs(self) -> None:
+        with self.assertRaises(ValueError):
+            calculate_var_scale(-0.01, 0.15)
+        with self.assertRaises(ValueError):
+            calculate_var_scale(0.10, 0.0)
+
     def test_normal_var_es_and_validation(self) -> None:
         date = pd.Timestamp("2026-08-14")
         weights = pd.DataFrame(

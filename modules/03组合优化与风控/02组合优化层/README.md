@@ -1,6 +1,6 @@
 # 02 组合优化层
 
-本层读取 01 层完整历史决策输入，对每一个周度 `signal_date` 优化配置指定的候选股票权重，生成可直接供回测读取的完整历史权重表。启用换手惩罚后，按日期顺序引用上一期目标权重。
+本层读取 01 层日度历史决策输入，并根据官方交易日历分别选择完整结束的周度与月度 `signal_date`。两个频率各自维护上一期目标权重和换手惩罚，互不串用。
 
 目标函数为：
 
@@ -21,13 +21,18 @@ cash_weight = 1 - stock_exposure
 ## 运行
 
 ```powershell
-python .\02组合优化层\optimize.py
+python .\02组合优化层\optimize.py --frequency both
+
+# 也可以只生成一个频率
+python .\02组合优化层\optimize.py --frequency weekly
+python .\02组合优化层\optimize.py --frequency monthly
 ```
 
 ## 正式输出
 
 ```text
-outputs/releases/portfolio_history_起始日_结束日_v1/
+outputs/weekly/releases/portfolio_weekly_history_起始日_结束日_v1/
+outputs/monthly/releases/portfolio_monthly_history_起始日_结束日_v1/
 ├─ weights.parquet
 ├─ portfolio_summary.parquet
 ├─ config.yaml

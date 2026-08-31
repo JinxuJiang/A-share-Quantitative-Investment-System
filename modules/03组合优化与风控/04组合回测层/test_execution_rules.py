@@ -4,6 +4,8 @@ import unittest
 import importlib.util
 from pathlib import Path
 
+import pandas as pd
+
 
 MODULE_PATH = Path(__file__).with_name("backtrader.eval.py")
 SPEC = importlib.util.spec_from_file_location("portfolio_backtest", MODULE_PATH)
@@ -12,9 +14,41 @@ if SPEC is None or SPEC.loader is None:
 BACKTEST_MODULE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BACKTEST_MODULE)
 should_skip_minimum_rebalance = BACKTEST_MODULE.should_skip_minimum_rebalance
+apply_risk_scaling = BACKTEST_MODULE.apply_risk_scaling
 
 
 class MinimumRebalanceTests(unittest.TestCase):
+    def test_risk_scaling_preserves_relative_weights(self) -> None:
+        date = pd.Timestamp("2026-07-31")
+        weights = pd.DataFrame(
+            {
+                "signal_date": [date, date],
+                "stock_code": ["000001.XSHE", "000002.XSHE"],
+                "target_weight": [0.30, 0.60],
+            }
+        )
+        risk = pd.DataFrame({"signal_date": [date], "risk_scale": [0.75]})
+        scaled = apply_risk_scaling(weights, risk, enabled=True)
+        self.assertAlmostEqual(float(scaled["target_weight"].sum()), 0.675)
+        self.assertAlmostEqual(
+            float(scaled.iloc[1]["target_weight"] / scaled.iloc[0]["target_weight"]),
+            2.0,
+        )
+
+    def test_enabled_risk_scaling_requires_complete_dates(self) -> None:
+        weights = pd.DataFrame(
+            {
+                "signal_date": [pd.Timestamp("2026-07-31")],
+                "stock_code": ["000001.XSHE"],
+                "target_weight": [0.90],
+            }
+        )
+        risk = pd.DataFrame(
+            {"signal_date": [pd.Timestamp("2026-06-30")], "risk_scale": [0.75]}
+        )
+        with self.assertRaisesRegex(ValueError, "没有覆盖"):
+            apply_risk_scaling(weights, risk, enabled=True)
+
     def test_small_adjustment_is_skipped_when_exposure_is_unchanged(self) -> None:
         self.assertTrue(
             should_skip_minimum_rebalance(

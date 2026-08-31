@@ -247,13 +247,13 @@ def main() -> int:
     strategy_path = Path(args.strategy_config).resolve() if args.strategy_config else None
     config = load_merged_config(Path(args.config), strategy_path)
     price = load_price(resolve_layer_path(config["data"]["target_price"]))
+    prediction_paths = config["data"]["predictions"]
+    requested = list(prediction_paths) if args.model == "all" else [args.model]
     all_predictions = {
-        model: load_predictions(resolve_layer_path(path), model)
-        for model, path in config["data"]["predictions"].items()
+        model: load_predictions(resolve_layer_path(prediction_paths[model]), model)
+        for model in requested
     }
-    requested = list(all_predictions) if args.model == "all" else [args.model]
-    requested_predictions = {model: all_predictions[model] for model in requested}
-    common_dates = common_prediction_dates(requested_predictions)
+    common_dates = common_prediction_dates(all_predictions)
     price = slice_backtest_period(
         price,
         config["backtest"],

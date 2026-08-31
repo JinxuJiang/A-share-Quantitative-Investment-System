@@ -1,4 +1,4 @@
-schema_version: portfolio_risk_config_v1
+schema_version: portfolio_risk_config_v2
 
 paths:
   portfolio_output_root: ../02组合优化层/outputs
@@ -7,13 +7,21 @@ paths:
 
 risk:
   method: parametric_normal
-  horizon_days: 5
+  horizons:
+    weekly: 5
+    monthly: 20
   confidence_levels:
     - 0.95
     - 0.99
   expected_return: 0.0
   cash_return: 0.0
   cash_volatility: 0.0
+  scaling:
+    enabled: true
+    confidence_level: 0.95
+    var_budgets:
+      weekly: 0.075
+      monthly: 0.15
 
 validation:
   weight_tolerance: 1.0e-8
